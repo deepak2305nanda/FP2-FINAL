@@ -10,8 +10,28 @@ from keras.layers import LSTM, Dense
 from statsmodels.tsa.arima.model import ARIMA
 from scipy.optimize import minimize
 import streamlit as st
+from io import BytesIO
 
-# Function Definitions (shortened for brevity)
+def load_model_from_github():
+    model_urls = [
+        "https://github.com/deepak2305nanda/FP2-FINAL/blob/main/my_lstm_model_lstm.h5",
+        "https://github.com/deepak2305nanda/FP2-FINAL/blob/main/my_lstm_model_scaler.sav",
+        "https://github.com/deepak2305nanda/FP2-FINAL/blob/main/arima_predictor_arima.sav"
+    ]
+    
+    models = []
+    for url in model_urls:
+        response = requests.get(url)
+        if response.status_code == 200:
+            model_bytes = BytesIO(response.content)
+            model = cloudpickle.load(model_bytes)
+            models.append(model)
+        else:
+            print(f"Failed to download model from {url}. Status code: {response.status_code}")
+    
+    return tuple(models)
+
+models = load_model_from_github()
 
 def get_stock_symbols():
     stocks = st.text_input("Enter 10 stock symbols separated by commas:").split(',')
@@ -45,39 +65,9 @@ def preprocess_data(data):
         processed_data[symbol] = df
     return processed_data
 
-def create_lstm_model(input_shape):
-    model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=input_shape))
-    model.add(LSTM(50, return_sequences=False))
-    model.add(Dense(25))
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    return model
-
-def train_lstm(data, symbol):
+def predict_lstm(data, models[0], models[1], symbol, days=30):
     df = data[symbol]
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(df)
-
-    train_data_len = int(np.ceil(len(scaled_data) * .95))
-    train_data = scaled_data[0:int(train_data_len), :]
-
-    x_train, y_train = [], []
-    for i in range(60, len(train_data)):
-        x_train.append(train_data[i-60:i, 0])
-        y_train.append(train_data[i, 0])
-
-    x_train, y_train = np.array(x_train), np.array(y_train)
-    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-
-    model = create_lstm_model((x_train.shape[1], 1))
-    model.fit(x_train, y_train, batch_size=1, epochs=1)
-    
-    return model, scaler
-
-def predict_lstm(data, model, scaler, symbol, days=30):
-    df = data[symbol]
-    scaled_data = scaler.transform(df)
+    scaled_data = models[1].transform(df)
 
     test_data = scaled_data[-60:, :]
     x_test = [test_data]
@@ -86,12 +76,12 @@ def predict_lstm(data, model, scaler, symbol, days=30):
 
     predicted_prices = []
     for _ in range(days):
-        predicted_price = model.predict(x_test)
+        predicted_price = models[0].predict(x_test)
         predicted_prices.append(predicted_price[0][0])
         predicted_price_reshaped = np.reshape(predicted_price[0][0], (1, 1, 1))
         x_test = np.append(x_test[:, 1:, :], predicted_price_reshaped, axis=1)
 
-    predicted_prices = scaler.inverse_transform(np.array(predicted_prices).reshape(-1, 1))
+    predicted_prices = models[1].inverse_transform(np.array(predicted_prices).reshape(-1, 1))
     
     return predicted_prices
 
@@ -99,8 +89,7 @@ def get_short_term_predictions(stock_symbols, processed_data):
     short_term_predictions = {}
     
     for symbol in stock_symbols:
-        model, scaler = train_lstm(processed_data, symbol)
-        predictions = predict_lstm(processed_data, model, scaler, symbol)
+        predictions = predict_lstm(processed_data, models[0], models[1], symbol)
         short_term_predictions[symbol] = predictions
         
     return short_term_predictions
@@ -134,8 +123,7 @@ def get_long_term_predictions(stock_symbols, processed_data):
     long_term_predictions = {}
     
     for symbol in stock_symbols:
-        model_fit = train_arima(processed_data, symbol)
-        predictions = predict_arima(model_fit)
+        predictions = predict_arima(models[2])
         long_term_predictions[symbol] = predictions
         
     return long_term_predictions
